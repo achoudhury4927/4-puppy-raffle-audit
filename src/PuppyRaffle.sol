@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+// audit-ok Informational: Old version of solc, update to a later version. Remove ^ as it allows older solc versions with known vulnerabilites.
 pragma solidity ^0.7.6;
 
 import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
@@ -21,6 +22,7 @@ contract PuppyRaffle is ERC721, Ownable {
     uint256 public immutable entranceFee;
 
     address[] public players;
+    // audit-ok Informational-Gas: raffleDuration can be set to immutable
     uint256 public raffleDuration;
     uint256 public raffleStartTime;
     address public previousWinner;
@@ -35,6 +37,7 @@ contract PuppyRaffle is ERC721, Ownable {
     mapping(uint256 => string) public rarityToName;
 
     // audit-q - Information: IPFS isnt fully decentralised and could lead to nft image disappearing, consider storing onchain as svg
+    // audit-ok Informational-Gas: Set URIs to constant
     // Stats for the common puppy (pug)
     string private commonImageUri = "ipfs://QmSsYRx3LpDAb1GZQm7zZ1AuHZjfbPkD6J7s9r41xu1mf8";
     uint256 public constant COMMON_RARITY = 70;
@@ -79,8 +82,10 @@ contract PuppyRaffle is ERC721, Ownable {
     /// @notice duplicate entrants are not allowed
     /// @param newPlayers the list of players to enter the raffle
     // audit-q - Informational: Should be called participants according to doc
+    // audit-q - Medium: DDOS with a massive length or a small length if the players list is huge already
     function enterRaffle(address[] memory newPlayers) public payable {
-        require(msg.value == entranceFee * newPlayers.length, "PuppyRaffle: Must send enough to enter raffle");
+        require(msg.value == entranceFee * newPlayers.length, "PppyRaffle: Must send enough to enter raffleu");
+        // audit-ok Informational-Gas: Use cached length
         for (uint256 i = 0; i < newPlayers.length; i++) {
             players.push(newPlayers[i]);
         }
@@ -97,6 +102,7 @@ contract PuppyRaffle is ERC721, Ownable {
 
     /// @param playerIndex the index of the player to refund. You can find it externally by calling `getActivePlayerIndex`
     /// @dev This function will allow there to be blank spots in the array
+    // audit-q HIGH: Reentrancy, value is sent before players array is updated to remove the player. If player is a contract address refund can be recalled by a fallback or receive function.
     function refund(uint256 playerIndex) public {
         address playerAddress = players[playerIndex];
         require(playerAddress == msg.sender, "PuppyRaffle: Only the player can refund");
@@ -112,6 +118,9 @@ contract PuppyRaffle is ERC721, Ownable {
     /// @param player the address of a player in the raffle
     /// @return the index of the player in the array, if they are not active, it returns 0
     function getActivePlayerIndex(address player) external view returns (uint256) {
+        // audit-ok Informational-Gas: Use cached length
+        // audit-ok Informational-Gas: Use mapping so no need to loop through array
+        // audit-ok Low: User cannot differentiate being an active player in the 0th position and
         for (uint256 i = 0; i < players.length; i++) {
             if (players[i] == player) {
                 return i;
@@ -129,9 +138,16 @@ contract PuppyRaffle is ERC721, Ownable {
     function selectWinner() external {
         require(block.timestamp >= raffleStartTime + raffleDuration, "PuppyRaffle: Raffle not over");
         require(players.length >= 4, "PuppyRaffle: Need at least 4 players");
+        // audit-ok HIGH: Attacker can maniupulate block.timestamp to select the winner. 
+        // After the change to POS block.difficulty is unused so has been set to a constant of 0. This is because it irrelevant to proof of stake.
+        // This means that the only source if "randomness" in this calculation is block.timestamp which can be gamed by the attacker in advance.
+        // The attacker can calculate the winnerIndexe outside of this transaction ahead of time to ensure the winner is who they select. 
         uint256 winnerIndex =
             uint256(keccak256(abi.encodePacked(msg.sender, block.timestamp, block.difficulty))) % players.length;
         address winner = players[winnerIndex];
+        // audit-ok HIGH: Refund only zeroes out the index of a player before returning their entrance fee. 
+        // Players.length will include refunded players so totalAmountCollected will be the wrong amount. 
+        // So will prizepool which will drain the protocol of its fees to be collected/fail to transfer to the winner due to insufficient balance
         uint256 totalAmountCollected = players.length * entranceFee;
         uint256 prizePool = (totalAmountCollected * 80) / 100;
         // audit-q - Can fee be larger than uint64
@@ -141,6 +157,7 @@ contract PuppyRaffle is ERC721, Ownable {
         uint256 tokenId = totalSupply();
 
         // We use a different RNG calculate from the winnerIndex to determine rarity
+        // audit-ok HIGH: This does not provide RNG. Each msg.sender will have one rarity calculated for them which can never change. 
         uint256 rarity = uint256(keccak256(abi.encodePacked(msg.sender, block.difficulty))) % 100;
         if (rarity <= COMMON_RARITY) {
             tokenIdToRarity[tokenId] = COMMON_RARITY;
@@ -155,20 +172,25 @@ contract PuppyRaffle is ERC721, Ownable {
         previousWinner = winner;
         (bool success,) = winner.call{value: prizePool}("");
         require(success, "PuppyRaffle: Failed to send prize pool to winner");
+        // audit-ok HIGH: tokenId is not incremented thus this mint will fail after the first winner is selected as that nft will already have an owner
         _safeMint(winner, tokenId);
     }
 
     /// @notice this function will withdraw the fees to the feeAddress
+    // audit-ok High: An attacker can DDOS all fee withdrawls by selfdestructing a contract to send wei to this contract. This will make the require statement fail.
+    // audit-ok High: Anyone can call the withdrawFees method
     function withdrawFees() external {
         require(address(this).balance == uint256(totalFees), "PuppyRaffle: There are currently players active!");
         uint256 feesToWithdraw = totalFees;
         totalFees = 0;
+        // audit-q Why arent we using sendValue here? Is there any exploits with call vs sendValue
         (bool success,) = feeAddress.call{value: feesToWithdraw}("");
         require(success, "PuppyRaffle: Failed to withdraw fees");
     }
 
     /// @notice only the owner of the contract can change the feeAddress
     /// @param newFeeAddress the new address to send fees to
+    // audit-ok Informational: Is there a scenario where we want fees to be burnt by assigning zero address
     function changeFeeAddress(address newFeeAddress) external onlyOwner {
         feeAddress = newFeeAddress;
         emit FeeAddressChanged(newFeeAddress);
