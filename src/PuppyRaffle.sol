@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MIT
-// audit-ok Informational: Old version of solc, update to a later version. Remove ^ as it allows older solc versions with known vulnerabilites.
 pragma solidity ^0.7.6;
 
 import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
@@ -22,7 +21,6 @@ contract PuppyRaffle is ERC721, Ownable {
     uint256 public immutable entranceFee;
 
     address[] public players;
-    // audit-ok Informational-Gas: raffleDuration can be set to immutable
     uint256 public raffleDuration;
     uint256 public raffleStartTime;
     address public previousWinner;
@@ -36,8 +34,6 @@ contract PuppyRaffle is ERC721, Ownable {
     mapping(uint256 => string) public rarityToUri;
     mapping(uint256 => string) public rarityToName;
 
-    // audit-q - Information: IPFS isnt fully decentralised and could lead to nft image disappearing, consider storing onchain as svg
-    // audit-ok Informational-Gas: Set URIs to constant
     // Stats for the common puppy (pug)
     string private commonImageUri = "ipfs://QmSsYRx3LpDAb1GZQm7zZ1AuHZjfbPkD6J7s9r41xu1mf8";
     uint256 public constant COMMON_RARITY = 70;
@@ -209,14 +205,12 @@ contract PuppyRaffle is ERC721, Ownable {
     }
 
     /// @notice this could be a constant variable
-    // audit-q-ok This is fine at first look
     function _baseURI() internal pure returns (string memory) {
         return "data:application/json;base64,";
     }
 
     /// @notice this function will return the URI for the token
     /// @param tokenId the Id of the NFT
-    // audit-q-ok This is fine at first look
     function tokenURI(uint256 tokenId) public view virtual override returns (string memory) {
         require(_exists(tokenId), "PuppyRaffle: URI query for nonexistent token");
 
