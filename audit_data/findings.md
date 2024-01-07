@@ -303,3 +303,56 @@ contract ReentrancyAttacker {
 </details>
 
 3. Use the nonReentrant modifier in the ReentrancyGuard provided by the OpenZeppelins library.
+
+### [H-2] Insufficient randomness in `PuppyRaffle::selectWinner` allows the attacker to select the winner and rarity
+
+**Description:** An attacker can calculate `PuppyRaffle::winnerIndex` and `PuppyRaffle::rarity` in advance. The value of `PuppyRaffle::winnerIndex` can be calulcated in advance by manipulating the block.timestamp to ensure they are selected as the winner.
+
+The value of block.difficulty is a constant of 0 since the merge so rarity will always calculate to the same value for each wallet. An attacker can generate new wallets until they receive the rarity value they want completely removing the randomness.
+
+```javascript
+    function selectWinner() external {
+        require(block.timestamp >= raffleStartTime + raffleDuration, "PuppyRaffle: Raffle not over");
+        require(players.length >= 4, "PuppyRaffle: Need at least 4 players");
+>>      uint256 winnerIndex =
+>>        uint256(keccak256(abi.encodePacked(msg.sender, block.timestamp, block.difficulty))) % players.length;
+        address winner = players[winnerIndex];
+        uint256 totalAmountCollected = players.length * entranceFee;
+        uint256 prizePool = (totalAmountCollected * 80) / 100;
+        uint256 fee = (totalAmountCollected * 20) / 100;
+        totalFees = totalFees + uint64(fee);
+
+        uint256 tokenId = totalSupply();
+
+        // We use a different RNG calculate from the winnerIndex to determine rarity
+>>      uint256 rarity = uint256(keccak256(abi.encodePacked(msg.sender, block.difficulty))) % 100;
+        if (rarity <= COMMON_RARITY) {
+            tokenIdToRarity[tokenId] = COMMON_RARITY;
+        } else if (rarity <= COMMON_RARITY + RARE_RARITY) {
+            tokenIdToRarity[tokenId] = RARE_RARITY;
+        } else {
+            tokenIdToRarity[tokenId] = LEGENDARY_RARITY;
+        }
+
+        delete players;
+        raffleStartTime = block.timestamp;
+        previousWinner = winner;
+        (bool success,) = winner.call{value: prizePool}("");
+        require(success, "PuppyRaffle: Failed to send prize pool to winner");
+        _safeMint(winner, tokenId);
+    }
+```
+
+**Impact:** The attacker can ensure that they always win the raffle and mint the rarest NFT.
+
+**Proof of Concept:**
+
+<details>
+<summary> PoC </summary>
+
+</details>
+
+**Recommended Mitigation:**
+
+1. Use Chainlink VRF to ensure random values. See more here: https://docs.chain.link/vrf/
+2. Use a commit reveal scheme
