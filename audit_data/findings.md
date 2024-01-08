@@ -375,3 +375,22 @@ The value of block.difficulty is a constant of 0 since the merge so rarity will 
 1. Upgrade to version of solidity >0.8 which comes with arithmetic checks for free
 2. Use OpenZeppelin SafeMath to catch this error
 3. Change totalFees to a value of uint256
+
+### [H-4] Unsafe casting in `PuppyRaffle::selectWinner` for `PuppyRaffle::fee` will lead to reduction in fees received
+
+**Description:** `PuppyRaffle::fee` is type casted uint64 when has a type of uint256 which means that when fee has a value larger than uint64 you will lose
+
+**Impact:** The protocol will lose the fees it has collected and less fees will be withdrawn
+
+**Proof of Concept:**
+
+<details>
+<summary> PoC </summary>
+
+</details>
+
+**Recommended Mitigation:**
+
+1. Upgrade to version of solidity >0.8 which comes with arithmetic checks for free
+2. Use OpenZeppelin SafeMath to catch this error
+3. Change totalFees to a value of uint256
