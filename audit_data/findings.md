@@ -356,3 +356,22 @@ The value of block.difficulty is a constant of 0 since the merge so rarity will 
 
 1. Use Chainlink VRF to ensure random values. See more here: https://docs.chain.link/vrf/
 2. Use a commit reveal scheme
+
+### [H-3] Arithmetic overflow in `PuppyRaffle::selectWinner` for `PuppyRaffle::totalFees` calculation will make it impossible to withdraw fees.
+
+**Description:** As `PuppyRaffle::totalFees` is of type uint64 and `PuppyRaffle::fee` is type uint256. the value of fee can be much bigger than totalFees which will cause it overflow. This would cause the requirement stated in `PuppyRaffle::withdrawFees` to fail making it impossible to withdraw the fees that were collected.
+
+**Impact:** The protocol can no longer withdraw fees
+
+**Proof of Concept:**
+
+<details>
+<summary> PoC </summary>
+
+</details>
+
+**Recommended Mitigation:**
+
+1. Upgrade to version of solidity >0.8 which comes with arithmetic checks for free
+2. Use OpenZeppelin SafeMath to catch this error
+3. Change totalFees to a value of uint256
