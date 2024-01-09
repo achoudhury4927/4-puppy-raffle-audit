@@ -394,3 +394,21 @@ The value of block.difficulty is a constant of 0 since the merge so rarity will 
 1. Upgrade to version of solidity >0.8 which comes with arithmetic checks for free
 2. Use OpenZeppelin SafeMath to catch this error
 3. Change totalFees to a value of uint256
+
+### [H-5] Mishandling of ether in `PuppyRaffle::withdrawFees` will block any fees being withdrawn from the protocol
+
+**Description:** The require statement in `PuppyRaffle::withdrawFees` can be broken be selfdestructing a contract with a little ether and setting PuppyRaffle as the recipient address. The ether balance of PuppyRaffle will be updated and withdraw fees will forever fail the require statement.
+
+**Impact:** The protocol will no longer be able to withdraw fees
+
+**Proof of Concept:**
+
+<details>
+<summary> PoC </summary>
+
+</details>
+
+**Recommended Mitigation:**
+
+1. Remove the require statement and rework
+2. Instead of an equality check change it to a greater than or equal to check. To ensure that prize funds are not being withdrawn track the prize funds seperately and ensure that the total balance is greater than or equal to the prize + fees.
