@@ -365,18 +365,103 @@ The value of block.difficulty is a constant of 0 since the merge so rarity will 
 
 **Proof of Concept:**
 
+Place this in your PuppyRaffleTest.t.sol
+
 <details>
 <summary> PoC </summary>
+
+```javascript
+    function test_ArithmeticOverflowOfFeesStopsWithdrawls() public {
+        //Lets enter 100 players
+        address[] memory players = new address[](100);
+        for(uint i = 0; i<100; i++){
+            players[i] = address(i);
+        }
+        puppyRaffle.enterRaffle{value: entranceFee * players.length}(players);
+        //Select Winner
+        vm.warp(block.timestamp + duration + 1);
+        vm.roll(block.number + 1);
+        puppyRaffle.selectWinner();
+        //Attempt to withdraw
+        vm.expectRevert("PuppyRaffle: There are currently players active!");
+        puppyRaffle.withdrawFees();
+    }
+```
 
 </details>
 
 **Recommended Mitigation:**
 
 1. Upgrade to version of solidity >0.8 which comes with arithmetic checks for free
-2. Use OpenZeppelin SafeMath to catch this error
-3. Change totalFees to a value of uint256
 
-### [H-4] Unsafe casting in `PuppyRaffle::selectWinner` for `PuppyRaffle::fee` will lead to reduction in fees received
+```diff
+
+++pragma solidity 0.8.18;
+--pragma solidity ^0.7.6;
+
+```
+
+2. Rework contract to use OpenZeppelin SafeCast to catch this typecast error on fees and handle in rework
+
+```diff
+
+++  import {SafeCast} from "@openzeppelin/contracts/utils/Address.sol";
+
+contract PuppyRaffle is ERC721, Ownable {
+    using Address for address payable;
+++  using SafeCast for uint256;
+    ...
+}
+```
+
+3. Change totalFees to a type of uint256 and remove the typecasting on fees
+
+<details>
+
+```diff
+
+++  uint256 public totalFees = 0;
+--  uint64 public totalFees = 0;
+
+```
+
+```diff
+    function selectWinner() external {
+        require(block.timestamp >= raffleStartTime + raffleDuration, "PuppyRaffle: Raffle not over");
+        require(players.length >= 4, "PuppyRaffle: Need at least 4 players");
+        uint256 winnerIndex =
+            uint256(keccak256(abi.encodePacked(msg.sender, block.timestamp, block.difficulty))) % players.length;
+        address winner = players[winnerIndex];
+        uint256 totalAmountCollected = players.length * entranceFee;
+        uint256 prizePool = (totalAmountCollected * 80) / 100;
+        uint256 fee = (totalAmountCollected * 20) / 100;
+++      totalFees = totalFees + fee;
+--      totalFees = totalFees + uint64(fee);
+
+        uint256 tokenId = totalSupply();
+
+        // We use a different RNG calculate from the winnerIndex to determine rarity
+        uint256 rarity = uint256(keccak256(abi.encodePacked(msg.sender, block.difficulty))) % 100;
+        if (rarity <= COMMON_RARITY) {
+            tokenIdToRarity[tokenId] = COMMON_RARITY;
+        } else if (rarity <= COMMON_RARITY + RARE_RARITY) {
+            tokenIdToRarity[tokenId] = RARE_RARITY;
+        } else {
+            tokenIdToRarity[tokenId] = LEGENDARY_RARITY;
+        }
+
+        delete players;
+        raffleStartTime = block.timestamp;
+        previousWinner = winner;
+        (bool success,) = winner.call{value: prizePool}("");
+        require(success, "PuppyRaffle: Failed to send prize pool to winner");
+        _safeMint(winner, tokenId);
+    }
+```
+
+</details>
+
+### [H-4] Unsafe casting in `PuppyRaffle::selectWinner` for `PuppyRaffle::fee` will lead to reduction in fees collected
 
 **Description:** `PuppyRaffle::fee` is type casted uint64 when it has a type of uint256 which means that when fee has a value larger than uint64 the value will wrap around to 0 losing all the previous fees.
 
@@ -440,7 +525,6 @@ Place this into your PuppyRaffleTest.t.sol
         for(uint i = 0; i<100; i++){
             players[i] = address(i);
         }
-        //Gas cost for entering the first 1000 players
         puppyRaffle.enterRaffle{value: entranceFee * players.length}(players);
         //Calculate expected fees to be collected
         uint256 totalAmountCollected = address(puppyRaffle).balance;
