@@ -378,22 +378,161 @@ The value of block.difficulty is a constant of 0 since the merge so rarity will 
 
 ### [H-4] Unsafe casting in `PuppyRaffle::selectWinner` for `PuppyRaffle::fee` will lead to reduction in fees received
 
-**Description:** `PuppyRaffle::fee` is type casted uint64 when has a type of uint256 which means that when fee has a value larger than uint64 you will lose
+**Description:** `PuppyRaffle::fee` is type casted uint64 when it has a type of uint256 which means that when fee has a value larger than uint64 the value will wrap around to 0 losing all the previous fees.
+
+```javascript
+    function selectWinner() external {
+        require(block.timestamp >= raffleStartTime + raffleDuration, "PuppyRaffle: Raffle not over");
+        require(players.length >= 4, "PuppyRaffle: Need at least 4 players");
+        uint256 winnerIndex =
+            uint256(keccak256(abi.encodePacked(msg.sender, block.timestamp, block.difficulty))) % players.length;
+        address winner = players[winnerIndex];
+        uint256 totalAmountCollected = players.length * entranceFee;
+        uint256 prizePool = (totalAmountCollected * 80) / 100;
+        uint256 fee = (totalAmountCollected * 20) / 100;
+>>      totalFees = totalFees + uint64(fee);
+
+        uint256 tokenId = totalSupply();
+
+        // We use a different RNG calculate from the winnerIndex to determine rarity
+        uint256 rarity = uint256(keccak256(abi.encodePacked(msg.sender, block.difficulty))) % 100;
+        if (rarity <= COMMON_RARITY) {
+            tokenIdToRarity[tokenId] = COMMON_RARITY;
+        } else if (rarity <= COMMON_RARITY + RARE_RARITY) {
+            tokenIdToRarity[tokenId] = RARE_RARITY;
+        } else {
+            tokenIdToRarity[tokenId] = LEGENDARY_RARITY;
+        }
+
+        delete players;
+        raffleStartTime = block.timestamp;
+        previousWinner = winner;
+        (bool success,) = winner.call{value: prizePool}("");
+        require(success, "PuppyRaffle: Failed to send prize pool to winner");
+        _safeMint(winner, tokenId);
+    }
+```
 
 **Impact:** The protocol will lose the fees it has collected and less fees will be withdrawn
 
 **Proof of Concept:**
 
+Divide the logged values below by 1e18 to convert to ether value. The fees calculated are 20 ether but the protocol calculates totalFees are 1.5 ether.
+
+Logs:
+Balance of PuppyRaffle before selectWinner: 100000000000000000000
+
+Fees calculated to be collected: 20000000000000000000
+
+Balance of PuppyRaffle after selectWinner: 20000000000000000000
+
+Value of totalFees after select winner: 1553255926290448384
+
 <details>
 <summary> PoC </summary>
+
+Place this into your PuppyRaffleTest.t.sol
+
+```javascript
+    function test_UnsafeTypeCastingOfFees() public {
+        //Lets enter 100 players
+        address[] memory players = new address[](100);
+        for(uint i = 0; i<100; i++){
+            players[i] = address(i);
+        }
+        //Gas cost for entering the first 1000 players
+        puppyRaffle.enterRaffle{value: entranceFee * players.length}(players);
+        //Calculate expected fees to be collected
+        uint256 totalAmountCollected = address(puppyRaffle).balance;
+        uint256 fee = (totalAmountCollected * 20) / 100;
+        console.log("Balance of PuppyRaffle before selectWinner: ", address(puppyRaffle).balance);
+        console.log("Fees calculated to be collected: ", fee);
+        //Select Winner
+        vm.warp(block.timestamp + duration + 1);
+        vm.roll(block.number + 1);
+        puppyRaffle.selectWinner();
+        //Actual fees to be collected
+        console.log("Balance of PuppyRaffle after selectWinner: ", address(puppyRaffle).balance);
+        console.log("Value of totalFees after select winner: ", puppyRaffle.totalFees());
+        //Assertions
+        assertTrue(fee > type(uint64).max);
+        assertTrue(puppyRaffle.totalFees() < fee);
+        assertTrue(puppyRaffle.totalFees() < type(uint64).max);
+    }
+```
 
 </details>
 
 **Recommended Mitigation:**
 
 1. Upgrade to version of solidity >0.8 which comes with arithmetic checks for free
-2. Use OpenZeppelin SafeMath to catch this error
-3. Change totalFees to a value of uint256
+
+```diff
+
+++pragma solidity 0.8.18;
+--pragma solidity ^0.7.6;
+
+```
+
+2. Rework contract to use OpenZeppelin SafeCast to catch this typecast error on fees and handle in rework
+
+```diff
+
+++  import {SafeCast} from "@openzeppelin/contracts/utils/Address.sol";
+
+contract PuppyRaffle is ERC721, Ownable {
+    using Address for address payable;
+++  using SafeCast for uint256;
+    ...
+}
+```
+
+3. Change totalFees to a type of uint256 and remove the typecasting on fees
+
+<details>
+
+```diff
+
+++  uint256 public totalFees = 0;
+--  uint64 public totalFees = 0;
+
+```
+
+```diff
+    function selectWinner() external {
+        require(block.timestamp >= raffleStartTime + raffleDuration, "PuppyRaffle: Raffle not over");
+        require(players.length >= 4, "PuppyRaffle: Need at least 4 players");
+        uint256 winnerIndex =
+            uint256(keccak256(abi.encodePacked(msg.sender, block.timestamp, block.difficulty))) % players.length;
+        address winner = players[winnerIndex];
+        uint256 totalAmountCollected = players.length * entranceFee;
+        uint256 prizePool = (totalAmountCollected * 80) / 100;
+        uint256 fee = (totalAmountCollected * 20) / 100;
+++      totalFees = totalFees + fee;
+--      totalFees = totalFees + uint64(fee);
+
+        uint256 tokenId = totalSupply();
+
+        // We use a different RNG calculate from the winnerIndex to determine rarity
+        uint256 rarity = uint256(keccak256(abi.encodePacked(msg.sender, block.difficulty))) % 100;
+        if (rarity <= COMMON_RARITY) {
+            tokenIdToRarity[tokenId] = COMMON_RARITY;
+        } else if (rarity <= COMMON_RARITY + RARE_RARITY) {
+            tokenIdToRarity[tokenId] = RARE_RARITY;
+        } else {
+            tokenIdToRarity[tokenId] = LEGENDARY_RARITY;
+        }
+
+        delete players;
+        raffleStartTime = block.timestamp;
+        previousWinner = winner;
+        (bool success,) = winner.call{value: prizePool}("");
+        require(success, "PuppyRaffle: Failed to send prize pool to winner");
+        _safeMint(winner, tokenId);
+    }
+```
+
+</details>
 
 ### [H-5] Mishandling of ether in `PuppyRaffle::withdrawFees` will block any fees being withdrawn from the protocol
 
